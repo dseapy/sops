@@ -7,20 +7,15 @@ package kms //import "go.mozilla.org/sops/v3/kms"
 import (
 	"encoding/base64"
 	"fmt"
-	"os"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"golang.org/x/net/context"
 	"regexp"
 	"strings"
 	"time"
 
 	"go.mozilla.org/sops/v3/logging"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/kms"
-	"github.com/aws/aws-sdk-go/service/kms/kmsiface"
-	"github.com/aws/aws-sdk-go/service/sts"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,7 +27,6 @@ func init() {
 
 // this needs to be a global var for unit tests to work (mockKMS redefines
 // it in keysource_test.go)
-var kmsSvc kmsiface.KMSAPI
 var isMocked bool
 
 // MasterKey is a AWS KMS key used to encrypt and decrypt sops' data key.
@@ -41,7 +35,7 @@ type MasterKey struct {
 	Role              string
 	EncryptedKey      string
 	CreationDate      time.Time
-	EncryptionContext map[string]*string
+	EncryptionContext map[string]string
 	AwsProfile        string
 }
 
@@ -57,17 +51,12 @@ func (key *MasterKey) SetEncryptedDataKey(enc []byte) {
 
 // Encrypt takes a sops data key, encrypts it with KMS and stores the result in the EncryptedKey field
 func (key *MasterKey) Encrypt(dataKey []byte) error {
-	// isMocked is set by unit test to indicate that the KMS service
-	// has already been initialized. it's ugly, but it works.
-	if kmsSvc == nil || !isMocked {
-		sess, err := key.createSession()
-		if err != nil {
-			log.WithField("arn", key.Arn).Info("Encryption failed")
-			return fmt.Errorf("Failed to create session: %w", err)
-		}
-		kmsSvc = kms.New(sess)
+	client, err := key.createClient()
+	if err != nil {
+		log.WithField("arn", key.Arn).Info("Encryption failed")
+		return fmt.Errorf("Failed to create session: %w", err)
 	}
-	out, err := kmsSvc.Encrypt(&kms.EncryptInput{Plaintext: dataKey, KeyId: &key.Arn, EncryptionContext: key.EncryptionContext})
+	out, err := client.Encrypt(context.TODO(), &kms.EncryptInput{Plaintext: dataKey, KeyId: &key.Arn, EncryptionContext: key.EncryptionContext})
 	if err != nil {
 		log.WithField("arn", key.Arn).Info("Encryption failed")
 		return fmt.Errorf("Failed to call KMS encryption service: %w", err)
@@ -92,17 +81,12 @@ func (key *MasterKey) Decrypt() ([]byte, error) {
 		log.WithField("arn", key.Arn).Info("Decryption failed")
 		return nil, fmt.Errorf("Error base64-decoding encrypted data key: %s", err)
 	}
-	// isMocked is set by unit test to indicate that the KMS service
-	// has already been initialized. it's ugly, but it works.
-	if kmsSvc == nil || !isMocked {
-		sess, err := key.createSession()
-		if err != nil {
-			log.WithField("arn", key.Arn).Info("Decryption failed")
-			return nil, fmt.Errorf("Error creating AWS session: %w", err)
-		}
-		kmsSvc = kms.New(sess)
+	client, err := key.createClient()
+	if err != nil {
+		log.WithField("arn", key.Arn).Info("Decryption failed")
+		return nil, fmt.Errorf("Error creating AWS session: %w", err)
 	}
-	decrypted, err := kmsSvc.Decrypt(&kms.DecryptInput{CiphertextBlob: k, EncryptionContext: key.EncryptionContext})
+	decrypted, err := client.Decrypt(context.TODO(), &kms.DecryptInput{CiphertextBlob: k, EncryptionContext: key.EncryptionContext})
 	if err != nil {
 		log.WithField("arn", key.Arn).Info("Decryption failed")
 		return nil, fmt.Errorf("Error decrypting key: %w", err)
@@ -122,7 +106,7 @@ func (key *MasterKey) ToString() string {
 }
 
 // NewMasterKey creates a new MasterKey from an ARN, role and context, setting the creation date to the current date
-func NewMasterKey(arn string, role string, context map[string]*string) *MasterKey {
+func NewMasterKey(arn string, role string, context map[string]string) *MasterKey {
 	return &MasterKey{
 		Arn:               arn,
 		Role:              role,
@@ -132,7 +116,7 @@ func NewMasterKey(arn string, role string, context map[string]*string) *MasterKe
 }
 
 // NewMasterKeyFromArn takes an ARN string and returns a new MasterKey for that ARN
-func NewMasterKeyFromArn(arn string, context map[string]*string, awsProfile string) *MasterKey {
+func NewMasterKeyFromArn(arn string, context map[string]string, awsProfile string) *MasterKey {
 	k := &MasterKey{}
 	arn = strings.Replace(arn, " ", "", -1)
 	roleIndex := strings.Index(arn, "+arn:aws:iam::")
@@ -149,7 +133,7 @@ func NewMasterKeyFromArn(arn string, context map[string]*string, awsProfile stri
 }
 
 // MasterKeysFromArnString takes a comma separated list of AWS KMS ARNs and returns a slice of new MasterKeys for those ARNs
-func MasterKeysFromArnString(arn string, context map[string]*string, awsProfile string) []*MasterKey {
+func MasterKeysFromArnString(arn string, context map[string]string, awsProfile string) []*MasterKey {
 	var keys []*MasterKey
 	if arn == "" {
 		return keys
@@ -160,55 +144,19 @@ func MasterKeysFromArnString(arn string, context map[string]*string, awsProfile 
 	return keys
 }
 
-func (key MasterKey) createStsSession(config aws.Config, sess *session.Session) (*session.Session, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, err
-	}
-	stsRoleSessionNameRe, err := regexp.Compile("[^a-zA-Z0-9=,.@-]+")
-	if err != nil {
-		return nil, fmt.Errorf("Failed to compile STS role session name regex: %w", err)
-	}
-	sanitizedHostname := stsRoleSessionNameRe.ReplaceAllString(hostname, "")
-	stsService := sts.New(sess)
-	name := "sops@" + sanitizedHostname
-	out, err := stsService.AssumeRole(&sts.AssumeRoleInput{
-		RoleArn: &key.Role, RoleSessionName: &name})
-	if err != nil {
-		return nil, fmt.Errorf("Failed to assume role %q: %w", key.Role, err)
-	}
-	config.Credentials = credentials.NewStaticCredentials(*out.Credentials.AccessKeyId,
-		*out.Credentials.SecretAccessKey, *out.Credentials.SessionToken)
-	sess, err = session.NewSession(&config)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create new aws session: %w", err)
-	}
-	return sess, nil
-}
-
-func (key MasterKey) createSession() (*session.Session, error) {
+func (key MasterKey) createClient() (*kms.Client, error) {
 	re := regexp.MustCompile(`^arn:aws[\w-]*:kms:(.+):[0-9]+:(key|alias)/.+$`)
 	matches := re.FindStringSubmatch(key.Arn)
 	if matches == nil {
 		return nil, fmt.Errorf("No valid ARN found in %q", key.Arn)
 	}
 
-	config := aws.Config{Region: aws.String(matches[1])}
-
-	opts := session.Options{
-		Profile:                 key.AwsProfile,
-		Config:                  config,
-		AssumeRoleTokenProvider: stscreds.StdinTokenProvider,
-		SharedConfigState:       session.SharedConfigEnable,
-	}
-	sess, err := session.NewSessionWithOptions(opts)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return nil, err
+		panic("configuration error, " + err.Error())
 	}
-	if key.Role != "" {
-		return key.createStsSession(config, sess)
-	}
-	return sess, nil
+	client := kms.NewFromConfig(cfg)
+	return client, nil
 }
 
 // ToMap converts the MasterKey to a map for serialization purposes
@@ -223,7 +171,7 @@ func (key MasterKey) ToMap() map[string]interface{} {
 	if key.EncryptionContext != nil {
 		outcontext := make(map[string]string)
 		for k, v := range key.EncryptionContext {
-			outcontext[k] = *v
+			outcontext[k] = v
 		}
 		out["context"] = outcontext
 	}
@@ -231,9 +179,9 @@ func (key MasterKey) ToMap() map[string]interface{} {
 }
 
 // ParseKMSContext takes either a KMS context map or a comma-separated list of KMS context key:value pairs and returns a map
-func ParseKMSContext(in interface{}) map[string]*string {
+func ParseKMSContext(in interface{}) map[string]string {
 	nonStringValueWarning := "Encryption context contains a non-string value, context will not be used"
-	out := make(map[string]*string)
+	out := make(map[string]string)
 
 	switch in := in.(type) {
 	case map[string]interface{}:
@@ -246,7 +194,7 @@ func ParseKMSContext(in interface{}) map[string]*string {
 				log.Warn(nonStringValueWarning)
 				return nil
 			}
-			out[k] = &value
+			out[k] = value
 		}
 	case map[interface{}]interface{}:
 		if len(in) == 0 {
@@ -263,7 +211,7 @@ func ParseKMSContext(in interface{}) map[string]*string {
 				log.Warn(nonStringValueWarning)
 				return nil
 			}
-			out[key] = &value
+			out[key] = value
 		}
 	case string:
 		if in == "" {
@@ -275,7 +223,7 @@ func ParseKMSContext(in interface{}) map[string]*string {
 				log.Warn(nonStringValueWarning)
 				return nil
 			}
-			out[kv[0]] = &kv[1]
+			out[kv[0]] = kv[1]
 		}
 	}
 	return out
