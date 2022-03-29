@@ -3,20 +3,16 @@ package publish
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"path/filepath"
 	"strings"
 
+	"github.com/sirupsen/logrus"
 	"go.mozilla.org/sops/v3"
-	"go.mozilla.org/sops/v3/cmd/sops/codes"
 	"go.mozilla.org/sops/v3/cmd/sops/common"
 	"go.mozilla.org/sops/v3/config"
 	"go.mozilla.org/sops/v3/keyservice"
 	"go.mozilla.org/sops/v3/logging"
 	"go.mozilla.org/sops/v3/publish"
-	"go.mozilla.org/sops/v3/version"
-
-	"github.com/sirupsen/logrus"
 )
 
 var log *logrus.Logger
@@ -46,7 +42,7 @@ func Run(opts Opts) error {
 		return err
 	}
 
-	conf, err := config.LoadDestinationRuleForFile(opts.ConfigPath, opts.InputPath, make(map[string]*string))
+	conf, err := config.LoadDestinationRuleForFile(opts.ConfigPath, opts.InputPath, make(map[string]string))
 	if err != nil {
 		return err
 	}
@@ -76,65 +72,6 @@ func Run(opts Opts) error {
 	data := map[string]interface{}{}
 
 	switch conf.Destination.(type) {
-	case *publish.S3Destination, *publish.GCSDestination:
-		// Re-encrypt if settings exist to do so
-		if len(conf.KeyGroups[0]) != 0 {
-			log.Debug("Re-encrypting tree before publishing")
-			_, err = common.DecryptTree(common.DecryptTreeOpts{
-				Cipher:      opts.Cipher,
-				IgnoreMac:   false,
-				Tree:        tree,
-				KeyServices: opts.KeyServices,
-			})
-			if err != nil {
-				return err
-			}
-
-			diffs := common.DiffKeyGroups(tree.Metadata.KeyGroups, conf.KeyGroups)
-			keysWillChange := false
-			for _, diff := range diffs {
-				if len(diff.Added) > 0 || len(diff.Removed) > 0 {
-					keysWillChange = true
-				}
-			}
-			if keysWillChange {
-				fmt.Printf("The following changes will be made to the file's key groups:\n")
-				common.PrettyPrintDiffs(diffs)
-			}
-
-			tree.Metadata = sops.Metadata{
-				KeyGroups:         conf.KeyGroups,
-				UnencryptedSuffix: conf.UnencryptedSuffix,
-				EncryptedSuffix:   conf.EncryptedSuffix,
-				Version:           version.Version,
-				ShamirThreshold:   conf.ShamirThreshold,
-			}
-
-			dataKey, errs := tree.GenerateDataKeyWithKeyServices(opts.KeyServices)
-			if len(errs) > 0 {
-				err = fmt.Errorf("Could not generate data key: %s", errs)
-				return err
-			}
-
-			err = common.EncryptTree(common.EncryptTreeOpts{
-				DataKey: dataKey,
-				Tree:    tree,
-				Cipher:  opts.Cipher,
-			})
-			if err != nil {
-				return err
-			}
-
-			fileContents, err = opts.InputStore.EmitEncryptedFile(*tree)
-			if err != nil {
-				return common.NewExitError(fmt.Sprintf("Could not marshal tree: %s", err), codes.ErrorDumpingTree)
-			}
-		} else {
-			fileContents, err = ioutil.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("could not read file: %s", err)
-			}
-		}
 	case *publish.VaultDestination:
 		_, err = common.DecryptTree(common.DecryptTreeOpts{
 			Cipher:      opts.Cipher,
@@ -172,7 +109,7 @@ func Run(opts Opts) error {
 	}
 
 	switch dest := conf.Destination.(type) {
-	case *publish.S3Destination, *publish.GCSDestination:
+	case *publish.GCSDestination:
 		err = dest.Upload(fileContents, destinationPath)
 	case *publish.VaultDestination:
 		err = dest.UploadUnencrypted(data, destinationPath)

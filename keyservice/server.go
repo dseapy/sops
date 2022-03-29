@@ -314,10 +314,10 @@ func (ks Server) Decrypt(ctx context.Context,
 }
 
 func kmsKeyToMasterKey(key *KmsKey) kms.MasterKey {
-	ctx := make(map[string]*string)
+	ctx := make(map[string]string)
 	for k, v := range key.Context {
 		value := v // Allocate a new string to prevent the pointer below from referring to only the last iteration value
-		ctx[k] = &value
+		ctx[k] = value
 	}
 	return kms.MasterKey{
 		Arn:               key.Arn,

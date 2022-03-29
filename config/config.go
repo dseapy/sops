@@ -83,10 +83,10 @@ type gcpKmsKey struct {
 }
 
 type kmsKey struct {
-	Arn        string             `yaml:"arn"`
-	Role       string             `yaml:"role,omitempty"`
-	Context    map[string]*string `yaml:"context"`
-	AwsProfile string             `yaml:"aws_profile"`
+	Arn        string            `yaml:"arn"`
+	Role       string            `yaml:"role,omitempty"`
+	Context    map[string]string `yaml:"context"`
+	AwsProfile string            `yaml:"aws_profile"`
 }
 
 type azureKVKey struct {
@@ -147,7 +147,7 @@ type Config struct {
 	OmitExtensions    bool
 }
 
-func getKeyGroupsFromCreationRule(cRule *creationRule, kmsEncryptionContext map[string]*string) ([]sops.KeyGroup, error) {
+func getKeyGroupsFromCreationRule(cRule *creationRule, kmsEncryptionContext map[string]string) ([]sops.KeyGroup, error) {
 	var groups []sops.KeyGroup
 	if len(cRule.KeyGroups) > 0 {
 		for _, group := range cRule.KeyGroups {
@@ -235,7 +235,7 @@ func loadConfigFile(confPath string) (*configFile, error) {
 	return conf, nil
 }
 
-func configFromRule(rule *creationRule, kmsEncryptionContext map[string]*string) (*Config, error) {
+func configFromRule(rule *creationRule, kmsEncryptionContext map[string]string) (*Config, error) {
 	cryptRuleCount := 0
 	if rule.UnencryptedSuffix != "" {
 		cryptRuleCount++
@@ -266,7 +266,7 @@ func configFromRule(rule *creationRule, kmsEncryptionContext map[string]*string)
 	}, nil
 }
 
-func parseDestinationRuleForFile(conf *configFile, filePath string, kmsEncryptionContext map[string]*string) (*Config, error) {
+func parseDestinationRuleForFile(conf *configFile, filePath string, kmsEncryptionContext map[string]string) (*Config, error) {
 	var rule *creationRule
 	var dRule *destinationRule
 
@@ -296,9 +296,6 @@ func parseDestinationRuleForFile(conf *configFile, filePath string, kmsEncryptio
 		if dRule.S3Bucket != "" && dRule.GCSBucket != "" && dRule.VaultPath != "" {
 			return nil, fmt.Errorf("error loading config: more than one destinations were found in a single destination rule, you can only use one per rule")
 		}
-		if dRule.S3Bucket != "" {
-			dest = publish.NewS3Destination(dRule.S3Bucket, dRule.S3Prefix)
-		}
 		if dRule.GCSBucket != "" {
 			dest = publish.NewGCSDestination(dRule.GCSBucket, dRule.GCSPrefix)
 		}
@@ -317,7 +314,7 @@ func parseDestinationRuleForFile(conf *configFile, filePath string, kmsEncryptio
 	return config, nil
 }
 
-func parseCreationRuleForFile(conf *configFile, confPath, filePath string, kmsEncryptionContext map[string]*string) (*Config, error) {
+func parseCreationRuleForFile(conf *configFile, confPath, filePath string, kmsEncryptionContext map[string]string) (*Config, error) {
 	// If config file doesn't contain CreationRules (it's empty or only contains DestionationRules), assume it does not exist
 	if conf.CreationRules == nil {
 		return nil, nil
@@ -329,7 +326,7 @@ func parseCreationRuleForFile(conf *configFile, confPath, filePath string, kmsEn
 	}
 
 	// compare file path relative to path of config file
-	filePath = strings.TrimPrefix(filePath, configDir + string(filepath.Separator))
+	filePath = strings.TrimPrefix(filePath, configDir+string(filepath.Separator))
 
 	var rule *creationRule
 
@@ -363,7 +360,7 @@ func parseCreationRuleForFile(conf *configFile, confPath, filePath string, kmsEn
 // LoadCreationRuleForFile load the configuration for a given SOPS file from the config file at confPath. A kmsEncryptionContext
 // should be provided for configurations that do not contain key groups, as there's no way to specify context inside
 // a SOPS config file outside of key groups.
-func LoadCreationRuleForFile(confPath string, filePath string, kmsEncryptionContext map[string]*string) (*Config, error) {
+func LoadCreationRuleForFile(confPath string, filePath string, kmsEncryptionContext map[string]string) (*Config, error) {
 	conf, err := loadConfigFile(confPath)
 	if err != nil {
 		return nil, err
@@ -374,7 +371,7 @@ func LoadCreationRuleForFile(confPath string, filePath string, kmsEncryptionCont
 
 // LoadDestinationRuleForFile works the same as LoadCreationRuleForFile, but gets the "creation_rule" from the matching destination_rule's
 // "recreation_rule".
-func LoadDestinationRuleForFile(confPath string, filePath string, kmsEncryptionContext map[string]*string) (*Config, error) {
+func LoadDestinationRuleForFile(confPath string, filePath string, kmsEncryptionContext map[string]string) (*Config, error) {
 	conf, err := loadConfigFile(confPath)
 	if err != nil {
 		return nil, err

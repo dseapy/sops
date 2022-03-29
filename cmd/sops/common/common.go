@@ -205,7 +205,7 @@ func GetKMSKeyWithEncryptionCtx(tree *sops.Tree) (keyGroupIndex int, keyIndex in
 				if kmsKey.EncryptionContext != nil && len(kmsKey.EncryptionContext) >= 2 {
 					duplicateValues := map[string]int{}
 					for _, v := range kmsKey.EncryptionContext {
-						duplicateValues[*v] = duplicateValues[*v] + 1
+						duplicateValues[v] = duplicateValues[v] + 1
 					}
 					if len(duplicateValues) > 1 {
 						return i, n, kmsKey
@@ -345,15 +345,15 @@ func RecoverDataKeyFromBuggyKMS(opts GenericDecryptOpts, tree *sops.Tree) []byte
 
 	encCtxVals := map[string]interface{}{}
 	for _, v := range keyToEdit.EncryptionContext {
-		encCtxVals[*v] = ""
+		encCtxVals[v] = ""
 	}
 
-	encCtxVariations := []map[string]*string{}
+	encCtxVariations := []map[string]string{}
 	for ctxVal := range encCtxVals {
-		encCtxVariation := map[string]*string{}
+		encCtxVariation := map[string]string{}
 		for key := range keyToEdit.EncryptionContext {
 			val := ctxVal
-			encCtxVariation[key] = &val
+			encCtxVariation[key] = val
 		}
 		encCtxVariations = append(encCtxVariations, encCtxVariation)
 	}

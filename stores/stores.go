@@ -70,12 +70,12 @@ type pgpkey struct {
 }
 
 type kmskey struct {
-	Arn              string             `yaml:"arn" json:"arn"`
-	Role             string             `yaml:"role,omitempty" json:"role,omitempty"`
-	Context          map[string]*string `yaml:"context,omitempty" json:"context,omitempty"`
-	CreatedAt        string             `yaml:"created_at" json:"created_at"`
-	EncryptedDataKey string             `yaml:"enc" json:"enc"`
-	AwsProfile       string             `yaml:"aws_profile" json:"aws_profile"`
+	Arn              string            `yaml:"arn" json:"arn"`
+	Role             string            `yaml:"role,omitempty" json:"role,omitempty"`
+	Context          map[string]string `yaml:"context,omitempty" json:"context,omitempty"`
+	CreatedAt        string            `yaml:"created_at" json:"created_at"`
+	EncryptedDataKey string            `yaml:"enc" json:"enc"`
+	AwsProfile       string            `yaml:"aws_profile" json:"aws_profile"`
 }
 
 type gcpkmskey struct {

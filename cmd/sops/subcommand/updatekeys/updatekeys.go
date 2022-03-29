@@ -45,7 +45,7 @@ func updateFile(opts Opts) error {
 	if err != nil {
 		return err
 	}
-	conf, err := config.LoadCreationRuleForFile(opts.ConfigPath, opts.InputPath, make(map[string]*string))
+	conf, err := config.LoadCreationRuleForFile(opts.ConfigPath, opts.InputPath, make(map[string]string))
 	if err != nil {
 		return err
 	}

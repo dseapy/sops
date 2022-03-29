@@ -48,7 +48,7 @@ func KeyFromMasterKey(mk keys.MasterKey) Key {
 	case *kms.MasterKey:
 		ctx := make(map[string]string)
 		for k, v := range mk.EncryptionContext {
-			ctx[k] = *v
+			ctx[k] = v
 		}
 		return Key{
 			KeyType: &Key_KmsKey{
